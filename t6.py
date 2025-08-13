@@ -1,90 +1,23 @@
 
-
-# Import statements for the refactored models
-import os
-import json
-import random
-import string
-from typing import Optional
-from sqlalchemy.orm import selectinload
-
-# Helper functions for the refactored models
-def get_category_translations(category):
-    """Get category translations from the new relational model"""
-    if not hasattr(category, 'translations') or not category.translations:
-        return {}
-    
-    titles = {"fa": category.title}
-    additional_titles = {
-        translation.language_id: translation.title
-        for translation in category.translations
-        if translation.language_id != "fa" and translation.title
-    }
-    titles.update(additional_titles)
-    return titles
-
-def get_food_sizes(food):
-    """Get food sizes from the new relational model"""
-    if not hasattr(food, 'size_items') or not food.size_items:
-        return []
-    
-    sizes = []
-    for size_item in food.size_items:
-        size_data = {
-            "id": size_item.id,
-            "type_size": size_item.type_size,
-            "status": size_item.status,
-            "image_url": size_item.image_url
-        }
-        
-        # Add translations if available
-        if hasattr(size_item, 'translations') and size_item.translations:
-            size_data["translations"] = [
-                {
-                    "language_id": trans.language_id,
-                    "title": trans.title,
-                    "price": trans.price
-                }
-                for trans in size_item.translations
-            ]
-        
-        sizes.append(size_data)
-    
-    return sizes
-
-@router.post("/publish_menu/{menu_id}")
-async def publish_a_menu(
-    menu_id: int,
+async def publish_a_menu_after_subscription(
+    menu_id: int = 1457,
+    store_id: int = 2060,
     theme: Optional[PublishMenu] = None,
-    user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Publish a menu with template rendering.
-    
-    This function has been updated to work with the refactored models:
-    - Uses relational tables instead of JSON fields for multi-language data
-    - Uses selectinload for efficient data loading
-    - Supports the new FoodLanguage, FoodSize, and FoodCategoryTranslation models
-    """
-    if not user:
-        raise get_user_exception()
+    # At the start of your publish_a_menu_after_subscription function
     all_menus_primary = (
         db.query(models.Menu)
-        .filter(
-            models.Menu.store_id == user.get("id"), models.Menu.is_sub_shop == False
-        )
+        .filter(models.Menu.store_id == store_id, models.Menu.is_sub_shop == False)
         .all()
     )
-    store_data = (
-        db.query(models.Members).filter(models.Members.id == user.get("id")).first()
-    )
+    store_data = db.query(models.Members).filter(models.Members.id == store_id).first()
     real_store_data = (
-        db.query(models.Members).filter(models.Members.id == user.get("id")).first()
+        db.query(models.Members).filter(models.Members.id == store_id).first()
     )
     all_menus = (
         db.query(models.Menu)
-        .filter(models.Menu.store_id == user.get("id"))
+        .filter(models.Menu.store_id == store_id)
         .filter(models.Menu.id == menu_id)
         .first()
     )
@@ -169,8 +102,9 @@ async def publish_a_menu(
             )
             .all()
         )
-        print("Retrieved Categories:", categories)
-        print("Number of Categories:", len(categories))
+        print("📂 Retrieved Categories:", categories)
+        print("📂 Number of Categories:", len(categories))
+
         parent_cats = (
             db.query(models.FoodCategory)
             .options(
@@ -182,7 +116,7 @@ async def publish_a_menu(
             .order_by(models.FoodCategory.position.asc())
             .all()
         )
-        print("Parent Categories:", parent_cats)
+        print("📁 Parent Categories:", parent_cats)
 
         all_menus.categories = categories
         saahel_subs = []
@@ -209,9 +143,8 @@ async def publish_a_menu(
                     for idx, size_item in enumerate(food_item.size_items):
                         if not hasattr(size_item, 'id') or not size_item.id:
                             size_item.id = f"{food_item.id}-{string.ascii_lowercase[idx]}"
-            print(
-                f"Foods for category id={category.id} title='{category.title}': {food}"
-            )
+            
+            print(f"Foods for category {category.id} - {category.title}: {food}")
             if category.enabled > 0:
                 if "Dalia" in base_template_name:
                     if category.parent_id != 0:
@@ -451,10 +384,7 @@ async def publish_a_menu(
                         for pr in parent_cats:
                             subs = (
                                 db.query(models.FoodCategory)
-                                .filter(
-                                    models.FoodCategory.parent_id == pr.id,
-                                    models.FoodCategory.store_id == user.get("id"),
-                                )
+                                .filter(models.FoodCategory.parent_id == pr.id)
                                 .order_by(models.FoodCategory.position.asc())
                                 .all()
                             )
@@ -1660,7 +1590,7 @@ async def publish_a_menu(
 
                             else:
                                 food_image = f'{os.getenv("BASE_URL")}/category/images/defaults/default_logo.png'
-                            if foodObj.sizes is not None:
+                            if foodObj.sizes != None:
                                 if len(foodObj.sizes) > 0:
                                     foodObj.sizes = [
                                         it
@@ -1718,64 +1648,96 @@ async def publish_a_menu(
                                 .filter(models.FoodCategory.id == foodObj.cat_id)
                                 .first()
                             )
-                            
-                            # Get food translations from new relational model
                             titles = {"fa": foodObj.title}
                             prces = {"fa": foodObj.price}
                             descs = {"fa": foodObj.description}
-                            
-                            if hasattr(foodObj, 'translations') and foodObj.translations:
-                                for translation in foodObj.translations:
-                                    if translation.language_id != "fa":
-                                        if translation.title:
-                                            titles[translation.language_id] = translation.title
-                                        if translation.price:
-                                            prces[translation.language_id] = translation.price
-                                        if translation.description:
-                                            descs[translation.language_id] = translation.description
-                            
-                            # Handle food sizes with new relational model
-                            if hasattr(foodObj, 'size_items') and foodObj.size_items:
-                                sizes = get_food_sizes(foodObj)
-                                foodObj.sizes = [
-                                    it
-                                    for it in sizes
-                                    if it.get("status", 1) is not None
-                                    and it.get("status", 1) != 0
-                                ]
-                                
-                                for it in foodObj.sizes:
-                                    if "status" not in it:
-                                        it["status"] = foodObj.available
-                                    
-                                    # Handle size translations from new relational model
-                                    if hasattr(foodObj, 'translations') and foodObj.translations:
-                                        new_titles = {}
-                                        new_prices = {}
-                                        
-                                        for translation in foodObj.translations:
-                                            if translation.language_id != "fa":
-                                                # Find corresponding size translation
-                                                if hasattr(translation, 'size_translations'):
-                                                    for size_trans in translation.size_translations:
-                                                        if size_trans.size_id == it.get("id"):
-                                                            new_titles[translation.language_id] = size_trans.title
-                                                            new_prices[translation.language_id] = str(size_trans.price)
-                                                
-                                                # Fallback to food translation if no size-specific translation
-                                                if translation.language_id not in new_titles:
-                                                    new_titles[translation.language_id] = it.get("title", "")
-                                                    new_prices[translation.language_id] = str(it.get("price", "0.0"))
-                                        
-                                        if new_titles:
+                            if (
+                                hasattr(foodObj, "multi_language_data")
+                                and foodObj.multi_language_data
+                            ):
+                                try:
+                                    lang_data = json.loads(
+                                        str(foodObj.multi_language_data)
+                                    )
+                                    add_prices = {
+                                        item["language_id"]: item["price"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    add_desc = {
+                                        item["language_id"]: item["description"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    additional_titles = {
+                                        item["language_id"]: item["title"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    titles.update(additional_titles)
+                                    prces.update(add_prices)
+                                    descs.update(add_desc)
+                                except json.JSONDecodeError:
+                                    titles = {}
+                                    prces = {}
+                                    descs = {}
+                            if foodObj.sizes != None:
+                                if len(foodObj.sizes) > 0:
+                                    foodObj.sizes = [
+                                        it
+                                        for it in foodObj.sizes
+                                        if it.get("status", 1) is not None
+                                        and it.get("status", 1) != 0
+                                    ]
+                                    for it in foodObj.sizes:
+                                        if "status" not in it:
+                                            it["status"] = foodObj.available
+                                        find_datas = it.get("size")
+                                        if (
+                                            hasattr(foodObj, "multi_language_data")
+                                            and foodObj.multi_language_data
+                                        ):
+                                            multi = ast.literal_eval(
+                                                str(foodObj.multi_language_data)
+                                            )
+                                            new_titles = {}
+                                            new_prices = {}
+
+                                            for item in multi:
+                                                if (
+                                                    item.get("sizes")
+                                                    and len(item.get("sizes")) > 0
+                                                ):
+                                                    for in_size in item.get("sizes"):
+
+                                                        if (
+                                                            in_size.get("size")
+                                                            == find_datas
+                                                        ):
+                                                            new_titles[
+                                                                item.get("language_id")
+                                                            ] = in_size.get("title")
+                                                            new_prices[
+                                                                item.get("language_id")
+                                                            ] = str(
+                                                                in_size.get("price")
+                                                            )
+                                                else:
+                                                    new_titles[
+                                                        item.get("language_id")
+                                                    ] = ""
+                                                    new_prices[
+                                                        item.get("language_id")
+                                                    ] = "0.0"
                                             it["title"] = new_titles
                                             it["price"] = new_prices
                                         else:
-                                            it["title"] = {"fa": it.get("title")}
-                                            it["price"] = {"fa": it.get("price")}
-                                    else:
-                                        it["title"] = {"fa": it.get("title")}
-                                        it["price"] = {"fa": it.get("price")}
+                                            if find_datas:
+                                                it["title"] = {"fa": it.get("title")}
+                                                it["price"] = {"fa": it.get("price")}
+                                            else:
+                                                it["title"] = {"fa": None}
+                                                it["price"] = {"fa": None}
 
                                     foodObject.append(
                                         {
@@ -2089,80 +2051,117 @@ async def publish_a_menu(
                                 sub_val = cat_name.title
                                 cat_id = main_cat.id
                                 sub_id = cat_name.id
-                            # Get food translations from new relational model
                             titles = {"fa": foodObj.title}
                             prces = {"fa": foodObj.price}
                             descs = {"fa": foodObj.description}
-                            
-                            if hasattr(foodObj, 'translations') and foodObj.translations:
-                                for translation in foodObj.translations:
-                                    if translation.language_id != "fa":
-                                        if translation.title:
-                                            titles[translation.language_id] = translation.title
-                                        if translation.price:
-                                            prces[translation.language_id] = translation.price
-                                        if translation.description:
-                                            descs[translation.language_id] = translation.description
-                            
-                            # Handle food sizes with new relational model
-                            if hasattr(foodObj, 'size_items') and foodObj.size_items:
-                                sizes = get_food_sizes(foodObj)
-                                foodObj.sizes = [
-                                    it
-                                    for it in sizes
-                                    if it.get("status", 1) is not None
-                                    and it.get("status", 1) != 0
-                                ]
-                                
-                                for new_item in foodObj.sizes:
-                                    # Handle size translations from new relational model
-                                    if hasattr(foodObj, 'translations') and foodObj.translations:
-                                        new_titles = {}
-                                        new_prices = {}
-                                        
-                                        for translation in foodObj.translations:
-                                            if translation.language_id != "fa":
-                                                # Find corresponding size translation
-                                                if hasattr(translation, 'size_translations'):
-                                                    for size_trans in translation.size_translations:
-                                                        if size_trans.size_id == new_item.get("id"):
-                                                            new_titles[translation.language_id] = size_trans.title
-                                                            new_prices[translation.language_id] = str(size_trans.price)
-                                                
-                                                # Fallback to food translation if no size-specific translation
-                                                if translation.language_id not in new_titles:
-                                                    new_titles[translation.language_id] = new_item.get("title", "")
-                                                    new_prices[translation.language_id] = str(new_item.get("price", "0.0"))
-                                        
-                                        if new_titles:
+                            if (
+                                hasattr(foodObj, "multi_language_data")
+                                and foodObj.multi_language_data
+                            ):
+                                try:
+                                    lang_data = json.loads(
+                                        str(foodObj.multi_language_data)
+                                    )
+                                    add_prices = {
+                                        item["language_id"]: item["price"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    add_desc = {
+                                        item["language_id"]: item["description"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    additional_titles = {
+                                        item["language_id"]: item["title"]
+                                        for item in lang_data
+                                        if item.get("language_id") != "fa"
+                                    }
+                                    titles.update(additional_titles)
+                                    prces.update(add_prices)
+                                    descs.update(add_desc)
+                                except json.JSONDecodeError:
+                                    titles = {}
+                                    prces = {}
+                                    descs = {}
+                            if foodObj.sizes != None:
+
+                                if len(foodObj.sizes) > 0:
+                                    foodObj.sizes = [
+                                        it
+                                        for it in foodObj.sizes
+                                        if it.get("status", 1) is not None
+                                        and it.get("status", 1) != 0
+                                    ]
+                                    for new_item in foodObj.sizes:
+                                        find_datas = new_item.get("size")
+
+                                        if (
+                                            hasattr(foodObj, "multi_language_data")
+                                            and foodObj.multi_language_data
+                                        ):
+                                            multi = json.loads(
+                                                str(foodObj.multi_language_data)
+                                            )
+                                            new_titles = {}
+                                            new_prices = {}
+
+                                            for item in multi:
+                                                if (
+                                                    item.get("sizes")
+                                                    and len(item.get("sizes")) > 0
+                                                ):
+                                                    for in_size in item.get("sizes"):
+
+                                                        if (
+                                                            in_size.get("size")
+                                                            == find_datas
+                                                        ):
+                                                            new_titles[
+                                                                item.get("language_id")
+                                                            ] = in_size.get("title")
+                                                            new_prices[
+                                                                item.get("language_id")
+                                                            ] = str(
+                                                                in_size.get("price")
+                                                            )
+                                                else:
+                                                    new_titles[
+                                                        item.get("language_id")
+                                                    ] = ""
+                                                    new_prices[
+                                                        item.get("language_id")
+                                                    ] = "0.0"
                                             new_item["title"] = new_titles
                                             new_item["price"] = new_prices
                                         else:
-                                            new_item["title"] = {"fa": new_item.get("title")}
-                                            new_item["price"] = {"fa": new_item.get("price")}
-                                    else:
-                                        new_item["title"] = {"fa": new_item.get("title")}
-                                        new_item["price"] = {"fa": new_item.get("price")}
+                                            if find_datas:
+                                                it["title"] = {"fa": it.get("title")}
+                                                it["price"] = {"fa": it.get("price")}
+                                            else:
+                                                it["title"] = {"fa": None}
+                                                it["price"] = {"fa": None}
 
-                                        foodObject.append(
-                                            {
-                                                "id": foodObj.id,
-                                                "title": titles,
-                                                "englishTitle": englishTitle,
-                                                "sizes": foodObj.sizes,
-                                                "category_id": cat_id,
-                                                "subCategory_id": sub_id,
-                                                "images": all_img,
-                                                "description": descs,
-                                                "videoUrl": video_url,
-                                                **(
-                                                    {"status": foodObj.available}
-                                                    if real_store_data.access_type == 3
-                                                    else {}
-                                                ),
-                                            }
-                                        )
+                                    foodObject.append(
+                                        {
+                                            "id": foodObj.id,
+                                            "title": titles,
+                                            "englishTitle": englishTitle,
+                                            "sizes": foodObj.sizes,
+                                            "category_id": cat_id,
+                                            "subCategory_id": sub_id,
+                                            "images": all_img,
+                                            "description": descs,
+                                            "videoUrl": video_url,
+                                            **(
+                                                {"status": foodObj.available}
+                                                if real_store_data.access_type == 3
+                                                else {}
+                                            ),
+                                        }
+                                    )
                                 else:
+
                                     foodObject.append(
                                         {
                                             "id": foodObj.id,
@@ -2381,9 +2380,7 @@ async def publish_a_menu(
                 )
 
     if selected_menu.is_sub_shop:
-        store = (
-            db.query(models.Members).filter(models.Members.id == user.get("id")).first()
-        )
+        store = db.query(models.Members).filter(models.Members.id == store_id).first()
 
         store_info.append(
             {
@@ -2454,13 +2451,17 @@ async def publish_a_menu(
             }
         )
 
-    if "sepehr" in base_template_name:
-        foodObject = list({obj["id"]: obj for obj in foodObject}.values())
+    print(
+        "✅ Final CategoryObj:", json.dumps(categoryObj, indent=2, ensure_ascii=False)
+    )
+    print("✅ Final FoodObject:", json.dumps(foodObject, indent=2, ensure_ascii=False))
 
     json_object = json.dumps(categoryObj, indent=4, ensure_ascii=False)
     food_object = json.dumps(foodObject, indent=4, ensure_ascii=False)
     shop_object = json.dumps(store_info, indent=4, ensure_ascii=False)
     desc_object = json.dumps(menu_description, indent=4, ensure_ascii=False)
+    template_filename = f"{tmp_name.lower()}.html"
+    search_results = find_file(template_filename, Path("/"))
     # # Writing to js file
     if "saahel" in base_template_name:
         with open(
@@ -2662,9 +2663,12 @@ async def publish_a_menu(
                     menu.is_primary = False
                 db.add(menu)
 
-    # with open(f"../{menu_folder_name}/{tmp_name.lower()}.html") as html_file:
-    template_path = find_template_file(menu_folder_name, base_template_name)
+    folder_name = (
+        menu_folder_name if isinstance(menu_folder_name, str) else "menu.rhinomenu.com"
+    )
+    template_path = get_template_path(folder_name, tmp_name)
     with open(template_path) as html_file:
+
         soup = BeautifulSoup(html_file.read(), features="html.parser")
         # if 'Dalia' in tmp_name:
         for tag in soup.find_all(id="change-data"):
@@ -2680,14 +2684,13 @@ async def publish_a_menu(
         for tag in soup.find_all(id="food_desc"):
             if tag is not None:
                 tag.string = selected_menu.description
-
         for tag in soup.find_all(id="desc"):
             if tag is not None:
                 tag.string = selected_menu.description
 
         for tag in soup.find_all(id="res_logo"):
             if tag is not None:
-                if store_data.brand_logo is not None and store_data.brand_logo != "":
+                if store_data.brand_logo != None and store_data.brand_logo != "":
                     tag["src"] = (
                         f'{os.getenv("BASE_URL")}/members/images/{store_data.brand_logo}'
                     )
@@ -2755,4 +2758,3 @@ async def publish_a_menu(
         new_html_file.write(new_text)
     db.commit()
     return {"success": True}
-
